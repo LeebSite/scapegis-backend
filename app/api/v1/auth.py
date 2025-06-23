@@ -2,61 +2,271 @@
 Authentication API endpoints
 """
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, BackgroundTasks
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel, EmailStr
+from datetime import datetime, timedelta
 from supabase import Client
-from app.core.database import get_supabase
+from sqlalchemy.orm import Session
+from app.core.database import get_supabase, get_db
 from app.core.auth import get_current_user, get_current_user_optional, AuthService
 from app.core.config import settings
+from app.models.user import UserProfile
+from app.schemas.auth import (
+    UserSignupRequest, UserLoginRequest, UserResponse, AuthResponse,
+    UserProfileUpdate, EmailVerificationRequest, ResendVerificationRequest,
+    ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest,
+    AuthStatusResponse, MessageResponse, UserPublicResponse
+)
+from app.services.email_service import email_service
 import logging
+import secrets
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
-# Pydantic models
-class UserProfileUpdate(BaseModel):
-    """Schema for updating user profile"""
-    username: Optional[str] = None
-    full_name: Optional[str] = None
-    avatar_url: Optional[str] = None
+# Helper functions
+async def get_user_by_email(db: Session, email: str) -> Optional[UserProfile]:
+    """Get user by email from database"""
+    try:
+        # First try to get from Supabase auth.users
+        supabase = get_supabase()
+        auth_response = supabase.auth.admin.list_users()
+
+        auth_user = None
+        for user in auth_response.users:
+            if user.email == email:
+                auth_user = user
+                break
+
+        if not auth_user:
+            return None
+
+        # Get user profile
+        profile = db.query(UserProfile).filter(UserProfile.id == auth_user.id).first()
+        return profile
+
+    except Exception as e:
+        logger.error(f"Error getting user by email: {e}")
+        return None
 
 
-class AuthResponse(BaseModel):
-    """Schema for authentication response"""
-    user: Dict[str, Any]
-    session: Optional[Dict[str, Any]] = None
-    message: str
+async def create_user_with_profile(db: Session, supabase: Client, email: str, password: str, full_name: Optional[str] = None) -> UserProfile:
+    """Create user in Supabase auth and profile in database"""
+    try:
+        # Create user in Supabase auth
+        auth_response = supabase.auth.admin.create_user({
+            "email": email,
+            "password": password,
+            "email_confirm": False  # We'll handle email verification manually
+        })
+
+        if not auth_response.user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to create user account"
+            )
+
+        # Generate verification token
+        verification_token = email_service.generate_verification_token()
+        verification_expires = email_service.get_token_expiry(24)  # 24 hours
+
+        # Create user profile
+        user_profile = UserProfile(
+            id=auth_response.user.id,
+            username=email.split('@')[0],  # Default username from email
+            full_name=full_name,
+            is_verified=False,
+            verification_token=verification_token,
+            verification_token_expires=verification_expires,
+            provider='email'
+        )
+
+        db.add(user_profile)
+        db.commit()
+        db.refresh(user_profile)
+
+        return user_profile
+
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating user: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create user account"
+        )
 
 
-class UserResponse(BaseModel):
-    """Schema for user response"""
-    id: str
-    email: str
-    username: Optional[str]
-    full_name: Optional[str]
-    avatar_url: Optional[str]
-    created_at: str
+# API Endpoints
 
-
-@router.get("/me", response_model=UserResponse)
-async def get_current_user_info(
-    current_user: Dict[str, Any] = Depends(get_current_user)
+@router.post("/signup", response_model=MessageResponse)
+async def signup(
+    user_data: UserSignupRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    supabase: Client = Depends(get_supabase)
 ):
-    """Get current authenticated user information"""
-    
-    profile = current_user.get("profile", {})
-    
-    return UserResponse(
-        id=current_user["user_id"],
-        email=current_user["email"],
-        username=profile.get("username"),
-        full_name=profile.get("full_name"),
-        avatar_url=profile.get("avatar_url"),
-        created_at=profile.get("created_at", "")
-    )
+    """User signup endpoint"""
+    try:
+        # Check if user already exists
+        existing_user = await get_user_by_email(db, user_data.email)
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+
+        # Create user with profile
+        user_profile = await create_user_with_profile(
+            db, supabase, user_data.email, user_data.password, user_data.full_name
+        )
+
+        # Send verification email in background
+        background_tasks.add_task(
+            email_service.send_verification_email,
+            user_data.email,
+            user_profile.verification_token,
+            user_profile.full_name
+        )
+
+        return MessageResponse(
+            message="Account created successfully. Please check your email to verify your account.",
+            success=True
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Signup error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create account"
+        )
+
+
+@router.post("/login", response_model=AuthResponse)
+async def login(
+    user_data: UserLoginRequest,
+    db: Session = Depends(get_db),
+    supabase: Client = Depends(get_supabase)
+):
+    """User login endpoint"""
+    try:
+        # Authenticate with Supabase
+        auth_response = supabase.auth.sign_in_with_password({
+            "email": user_data.email,
+            "password": user_data.password
+        })
+
+        if not auth_response.user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password"
+            )
+
+        # Get user profile
+        user_profile = db.query(UserProfile).filter(
+            UserProfile.id == auth_response.user.id
+        ).first()
+
+        if not user_profile:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User profile not found"
+            )
+
+        # Check if email is verified (for email provider)
+        if user_profile.provider == 'email' and not user_profile.is_verified:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Please verify your email address before logging in"
+            )
+
+        # Update login tracking
+        user_profile.last_login = datetime.utcnow()
+        user_profile.login_count += 1
+        db.commit()
+
+        # Create custom JWT token
+        auth_service = AuthService(supabase)
+        access_token = auth_service.create_access_token(
+            data={"sub": str(auth_response.user.id), "email": auth_response.user.email}
+        )
+
+        return AuthResponse(
+            access_token=access_token,
+            token_type="bearer",
+            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            user=UserResponse(
+                id=str(user_profile.id),
+                email=auth_response.user.email,
+                username=user_profile.username,
+                full_name=user_profile.full_name,
+                avatar_url=user_profile.avatar_url,
+                is_verified=user_profile.is_verified,
+                provider=user_profile.provider,
+                last_login=user_profile.last_login.isoformat() if user_profile.last_login else None,
+                login_count=user_profile.login_count,
+                created_at=user_profile.created_at.isoformat()
+            )
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Login failed"
+        )
+
+
+@router.get("/verify")
+async def verify_email(
+    token: str,
+    db: Session = Depends(get_db)
+):
+    """Email verification endpoint"""
+    try:
+        # Find user by verification token
+        user_profile = db.query(UserProfile).filter(
+            UserProfile.verification_token == token
+        ).first()
+
+        if not user_profile:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid verification token"
+            )
+
+        # Check if token is expired
+        if user_profile.verification_token_expires and user_profile.verification_token_expires < datetime.utcnow():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Verification token has expired"
+            )
+
+        # Verify user
+        user_profile.is_verified = True
+        user_profile.verification_token = None
+        user_profile.verification_token_expires = None
+        db.commit()
+
+        # Redirect to frontend success page
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/verified",
+            status_code=status.HTTP_302_FOUND
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Email verification error: {e}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/verification-error",
+            status_code=status.HTTP_302_FOUND
+        )
 
 
 @router.put("/profile", response_model=UserResponse)

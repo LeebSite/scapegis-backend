@@ -1,16 +1,22 @@
 """
 Setup database untuk OAuth authentication dengan Supabase
+Includes both OAuth and traditional email/password authentication
 """
 import asyncio
 import asyncpg
+import os
 from supabase import create_client, Client
+from dotenv import load_dotenv
 
-# Credentials Supabase (ganti dengan credentials Anda)
-SUPABASE_URL = "https://fgpyqyiazgouorgpkavr.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZncHlxeWlhemdvdW9yZ3BrYXZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA2OTY4NDgsImV4cCI6MjA2NjI3Mjg0OH0.mi6eHu3jJ9K2RXBz71IKCDNBGs9bnDPBf2a8-IcuvYI"
+# Load environment variables
+load_dotenv()
 
-# Database connection (ganti dengan connection string Anda)
-DATABASE_URL = "postgresql://postgres:your-password@db.fgpyqyiazgouorgpkavr.supabase.co:5432/postgres"
+# Credentials Supabase (dari environment variables)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "https://fgpyqyiazgouorgpkavr.supabase.co")
+SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZncHlxeWlhemdvdW9yZ3BrYXZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA2OTY4NDgsImV4cCI6MjA2NjI3Mjg0OH0.mi6eHu3jJ9K2RXBz71IKCDNBGs9bnDPBf2a8-IcuvYI")
+
+# Database connection (dari environment variables)
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:your-password@db.fgpyqyiazgouorgpkavr.supabase.co:5432/postgres")
 
 async def setup_oauth_tables():
     """Setup tabel dan policies untuk OAuth authentication"""
@@ -20,7 +26,7 @@ async def setup_oauth_tables():
         conn = await asyncpg.connect(DATABASE_URL)
         print("🔗 Connected to database")
         
-        # 1. Create user_profiles table
+        # 1. Create user_profiles table with enhanced fields
         print("📝 Creating user_profiles table...")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS public.user_profiles (
@@ -29,6 +35,15 @@ async def setup_oauth_tables():
                 full_name VARCHAR(100),
                 avatar_url TEXT,
                 workspace_id UUID,
+                is_verified BOOLEAN DEFAULT FALSE,
+                verification_token VARCHAR(255) UNIQUE,
+                verification_token_expires TIMESTAMP WITH TIME ZONE,
+                reset_password_token VARCHAR(255) UNIQUE,
+                reset_password_expires TIMESTAMP WITH TIME ZONE,
+                last_login TIMESTAMP WITH TIME ZONE,
+                login_count INTEGER DEFAULT 0,
+                provider VARCHAR(20) DEFAULT 'email', -- 'email', 'google', 'github', etc.
+                provider_id VARCHAR(255),
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             );

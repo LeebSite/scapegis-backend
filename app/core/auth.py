@@ -1,63 +1,77 @@
 """
-Authentication utilities for OAuth with Supabase
+Authentication utilities for OAuth and traditional auth with Supabase
 """
 from typing import Optional, Dict, Any
 from fastapi import HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
+from passlib.context import CryptContext
+from datetime import datetime, timedelta
 from supabase import Client
-from app.core.database import get_supabase
+from sqlalchemy.orm import Session
+from app.core.database import get_supabase, get_db
 from app.core.config import settings
+from app.models.user import UserProfile
+from app.services.email_service import email_service
 import httpx
 import logging
+import secrets
 
 logger = logging.getLogger(__name__)
 
 # Security scheme
 security = HTTPBearer()
 
+# Password hashing
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 class AuthService:
-    """Service for handling authentication with Supabase"""
-    
+    """Service for handling authentication with Supabase and traditional auth"""
+
     def __init__(self, supabase_client: Client):
         self.supabase = supabase_client
-    
+
+    # Password utilities
+    @staticmethod
+    def verify_password(plain_password: str, hashed_password: str) -> bool:
+        """Verify a password against its hash"""
+        return pwd_context.verify(plain_password, hashed_password)
+
+    @staticmethod
+    def get_password_hash(password: str) -> str:
+        """Hash a password"""
+        return pwd_context.hash(password)
+
+    def create_access_token(self, data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+        """Create JWT access token"""
+        to_encode = data.copy()
+        if expires_delta:
+            expire = datetime.utcnow() + expires_delta
+        else:
+            expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+        to_encode.update({"exp": expire})
+        encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+        return encoded_jwt
+
     async def verify_token(self, token: str) -> Dict[str, Any]:
-        """Verify JWT token from Supabase"""
+        """Verify JWT token"""
         try:
-            # Get JWT secret from Supabase
-            # Note: In production, you should cache this
-            response = await self._get_jwt_secret()
-            jwt_secret = response.get('jwt_secret')
-            
-            if not jwt_secret:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Could not validate credentials"
-                )
-            
-            # Decode and verify token
-            payload = jwt.decode(
-                token, 
-                jwt_secret, 
-                algorithms=[settings.ALGORITHM],
-                audience="authenticated"
-            )
-            
+            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
             user_id: str = payload.get("sub")
             if user_id is None:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Could not validate credentials"
                 )
-            
+
             return {
                 "user_id": user_id,
                 "email": payload.get("email"),
                 "role": payload.get("role", "authenticated"),
                 "exp": payload.get("exp")
             }
-            
+
         except JWTError as e:
             logger.error(f"JWT Error: {e}")
             raise HTTPException(
