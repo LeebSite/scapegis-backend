@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from app.core.config import settings
 from app.core.database import supabase
+from app.api.v1 import test_router, projects_router, layers_router, projects_supabase_router, projects_mock_router
 import uvicorn
 
 # Create FastAPI instance
@@ -19,11 +20,18 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=["http://localhost:3000", "http://localhost:8080"],  # Frontend URLs
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include API routers
+app.include_router(test_router, prefix="/api/v1")
+app.include_router(projects_router, prefix="/api/v1")
+app.include_router(layers_router, prefix="/api/v1")
+app.include_router(projects_supabase_router, prefix="/api/v1")
+app.include_router(projects_mock_router, prefix="/api/v1")
 
 # Add trusted host middleware for production
 if settings.ENVIRONMENT == "production":
@@ -51,7 +59,7 @@ async def health_check():
     if supabase:
         try:
             # Test simple query
-            response = supabase.table("projects").select("count").execute()
+            supabase.table("projects").select("count").execute()
             db_status = "connected"
         except Exception as e:
             db_status = f"error: {str(e)[:50]}..."

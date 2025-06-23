@@ -36,68 +36,84 @@ async def setup_postgis():
         print(f"❌ Error setup PostGIS: {e}")
         print("Pastikan DATABASE_URL sudah benar dan memiliki permission")
 
-async def create_sample_tables():
-    """Buat tabel contoh untuk GIS"""
+async def create_webgis_tables():
+    """Buat tabel sesuai spesifikasi frontend WebGIS"""
     try:
         conn = await asyncpg.connect(DATABASE_URL)
-        
-        print("🏗️ Creating sample GIS tables...")
-        
-        # Tabel Projects
+
+        print("🏗️ Creating WebGIS tables...")
+
+        # Enable UUID extension
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";")
+
+        # User profiles table (extends Supabase auth.users)
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS projects (
-                id SERIAL PRIMARY KEY,
-                name VARCHAR(255) NOT NULL,
+            CREATE TABLE IF NOT EXISTS public.user_profiles (
+                id UUID REFERENCES auth.users(id) PRIMARY KEY,
+                username VARCHAR(50) UNIQUE,
+                full_name VARCHAR(100),
+                avatar_url TEXT,
+                workspace_id UUID,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            );
+        """)
+
+        # Projects table
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS public.projects (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
                 description TEXT,
-                created_at TIMESTAMP DEFAULT NOW(),
-                updated_at TIMESTAMP DEFAULT NOW(),
-                bounds GEOMETRY(POLYGON, 4326)
+                workspace_id UUID,
+                owner_id UUID REFERENCES auth.users(id),
+                settings JSONB DEFAULT '{}',
+                bounds GEOMETRY(POLYGON, 4326),
+                center GEOMETRY(POINT, 4326),
+                zoom_level INTEGER DEFAULT 2,
+                is_public BOOLEAN DEFAULT FALSE,
+                layer_count INTEGER DEFAULT 0,
+                last_accessed TIMESTAMP WITH TIME ZONE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             );
         """)
-        
-        # Tabel Layers
+
+        # Layers table
         await conn.execute("""
-            CREATE TABLE IF NOT EXISTS layers (
-                id SERIAL PRIMARY KEY,
-                project_id INTEGER REFERENCES projects(id),
-                name VARCHAR(255) NOT NULL,
-                layer_type VARCHAR(50) NOT NULL,
-                style_config JSONB,
-                created_at TIMESTAMP DEFAULT NOW(),
-                geom GEOMETRY(GEOMETRY, 4326)
+            CREATE TABLE IF NOT EXISTS public.layers (
+                id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                description TEXT,
+                project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE,
+                layer_type VARCHAR(20) CHECK (layer_type IN ('base', 'vector', 'raster', 'point')),
+                data_source TEXT,
+                style_config JSONB DEFAULT '{}',
+                is_visible BOOLEAN DEFAULT TRUE,
+                opacity FLOAT DEFAULT 1.0,
+                z_index INTEGER DEFAULT 0,
+                bounds GEOMETRY(POLYGON, 4326),
+                feature_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             );
         """)
-        
-        # Tabel Features (untuk menyimpan fitur GIS)
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS features (
-                id SERIAL PRIMARY KEY,
-                layer_id INTEGER REFERENCES layers(id),
-                properties JSONB,
-                geometry GEOMETRY(GEOMETRY, 4326),
-                created_at TIMESTAMP DEFAULT NOW()
-            );
-        """)
-        
-        # Index spatial untuk performa
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_bounds ON projects USING GIST(bounds);")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_layers_geom ON layers USING GIST(geom);")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_features_geometry ON features USING GIST(geometry);")
-        
-        print("✅ Sample tables berhasil dibuat!")
-        
-        # Insert sample data
-        await conn.execute("""
-            INSERT INTO projects (name, description, bounds) 
-            VALUES ('Sample Project', 'Project contoh untuk testing', 
-                    ST_GeomFromText('POLYGON((106.8 -6.2, 106.9 -6.2, 106.9 -6.1, 106.8 -6.1, 106.8 -6.2))', 4326))
-            ON CONFLICT DO NOTHING;
-        """)
-        
-        print("✅ Sample data berhasil diinsert!")
-        
+
+        # Spatial indexes
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_bounds ON public.projects USING GIST (bounds);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_center ON public.projects USING GIST (center);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_layers_bounds ON public.layers USING GIST (bounds);")
+
+        # Regular indexes
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_owner ON public.projects (owner_id);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_workspace ON public.projects (workspace_id);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_layers_project ON public.layers (project_id);")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_layers_type ON public.layers (layer_type);")
+
+        print("✅ WebGIS tables berhasil dibuat!")
+
         await conn.close()
-        
+
     except Exception as e:
         print(f"❌ Error creating tables: {e}")
 
@@ -133,7 +149,7 @@ async def main():
     await setup_postgis()
     
     # Create tables
-    await create_sample_tables()
+    await create_webgis_tables()
     
     # Test Supabase access
     test_supabase_tables()

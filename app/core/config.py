@@ -26,13 +26,13 @@ class Settings(BaseSettings):
     SUPABASE_ANON_KEY: Optional[str] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZncHlxeWlhemdvdW9yZ3BrYXZyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTA2OTY4NDgsImV4cCI6MjA2NjI3Mjg0OH0.mi6eHu3jJ9K2RXBz71IKCDNBGs9bnDPBf2a8-IcuvYI"
     SUPABASE_SERVICE_ROLE_KEY: Optional[str] = None
 
-    # Database Configuration (Optional for now)
-    DATABASE_URL: Optional[str] = None
-    DATABASE_HOST: Optional[str] = None
+    # Database Configuration (Supabase PostgreSQL)
+    DATABASE_URL: Optional[str] = None  # Will be set via environment variable
+    DATABASE_HOST: Optional[str] = "db.fgpyqyiazgouorgpkavr.supabase.co"
     DATABASE_PORT: int = 5432
     DATABASE_NAME: str = "postgres"
     DATABASE_USER: str = "postgres"
-    DATABASE_PASSWORD: Optional[str] = None
+    DATABASE_PASSWORD: Optional[str] = None  # Will be set via environment variable
 
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379/0"

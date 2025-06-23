@@ -12,22 +12,27 @@ from app.core.config import settings
 # SQLAlchemy setup
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
 
-# Only create engines if DATABASE_URL is configured
+# Only create engines if DATABASE_URL is configured and valid
 async_engine = None
 sync_engine = None
 
-if SQLALCHEMY_DATABASE_URL:
-    # Async engine for async operations
-    async_engine = create_async_engine(
-        SQLALCHEMY_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
-        echo=settings.DEBUG
-    )
+if SQLALCHEMY_DATABASE_URL and "your-password" not in SQLALCHEMY_DATABASE_URL:
+    try:
+        # Async engine for async operations
+        async_engine = create_async_engine(
+            SQLALCHEMY_DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://"),
+            echo=settings.DEBUG
+        )
 
-    # Sync engine for migrations and sync operations
-    sync_engine = create_engine(
-        SQLALCHEMY_DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://"),
-        echo=settings.DEBUG
-    )
+        # Sync engine for migrations and sync operations
+        sync_engine = create_engine(
+            SQLALCHEMY_DATABASE_URL.replace("postgresql://", "postgresql+psycopg2://"),
+            echo=settings.DEBUG
+        )
+    except Exception as e:
+        print(f"Warning: Could not create database engines: {e}")
+        async_engine = None
+        sync_engine = None
 
 # Session makers (only if engines are available)
 AsyncSessionLocal = None
@@ -91,3 +96,7 @@ def get_supabase() -> Client:
 # Dependency to get Supabase admin client
 def get_supabase_admin() -> Client:
     return supabase_admin
+
+
+# Import models to ensure they are registered with SQLAlchemy
+from app.models import Project, Layer, UserProfile

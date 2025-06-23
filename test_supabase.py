@@ -44,7 +44,7 @@ def test_supabase_connection():
         print(f"❌ Error koneksi Supabase: {e}")
         print("Pastikan URL dan API Key sudah benar")
         print("\nTroubleshooting:")
-        print("1. Pastikan SUPABASE_URL format: https://your-project.supabase.co")
+        print("1. Pastikan SUPABASE_URL format: https://fgpyqyiazgouorgpkavr.supabase.co")
         print("2. Pastikan SUPABASE_KEY adalah anon key (public)")
         print("3. Pastikan project Supabase sudah aktif")
 
