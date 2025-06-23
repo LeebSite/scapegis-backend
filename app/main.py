@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from app.core.config import settings
 from app.core.database import supabase
-from app.api.v1 import test_router, projects_router, layers_router, projects_supabase_router, projects_mock_router
+from app.api.v1 import test_router, projects_router, layers_router, projects_supabase_router, projects_mock_router, auth
 import uvicorn
 
 # Create FastAPI instance
@@ -28,6 +28,7 @@ app.add_middleware(
 
 # Include API routers
 app.include_router(test_router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1")
 app.include_router(projects_router, prefix="/api/v1")
 app.include_router(layers_router, prefix="/api/v1")
 app.include_router(projects_supabase_router, prefix="/api/v1")
