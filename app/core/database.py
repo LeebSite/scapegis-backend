@@ -88,6 +88,18 @@ def get_db():
         db.close()
 
 
+# Optional dependency to get sync database session (returns None if not configured)
+def get_db_optional():
+    if SessionLocal is None:
+        yield None
+        return
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 # Dependency to get Supabase client
 def get_supabase() -> Client:
     return supabase

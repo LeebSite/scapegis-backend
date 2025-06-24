@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-super-secret-key-change-this-in-production"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
 
     # Supabase Configuration
     SUPABASE_URL: Optional[str] = "https://fgpyqyiazgouorgpkavr.supabase.co"
@@ -33,6 +34,20 @@ class Settings(BaseSettings):
     DATABASE_NAME: str = "postgres"
     DATABASE_USER: str = "postgres"
     DATABASE_PASSWORD: Optional[str] = None  # Will be set via environment variable
+    USE_DATABASE: bool = False  # For OAuth testing without database
+
+    # OAuth Configuration
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GITHUB_CLIENT_ID: Optional[str] = None
+    GITHUB_CLIENT_SECRET: Optional[str] = None
+
+    # OAuth Redirect URLs
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8001/api/v1/auth/oauth/callback/google"
+    GITHUB_REDIRECT_URI: str = "http://localhost:8001/api/v1/auth/oauth/callback/github"
+
+    # Frontend URL for OAuth redirects
+    FRONTEND_URL: str = "http://localhost:3001"
 
     # Redis Configuration
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -42,7 +57,7 @@ class Settings(BaseSettings):
     UPLOAD_PATH: str = "./uploads"
 
     # CORS Settings
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080"]
+    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:8080"]
 
     # Logging
     LOG_LEVEL: str = "INFO"

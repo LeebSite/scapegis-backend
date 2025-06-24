@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from datetime import datetime, timedelta
 from supabase import Client
 from sqlalchemy.orm import Session
-from app.core.database import get_supabase, get_db
+from app.core.database import get_supabase, get_db, get_db_optional
 from app.core.auth import get_current_user, get_current_user_optional, AuthService
 from app.core.config import settings
 from app.models.user import UserProfile
@@ -18,6 +18,7 @@ from app.schemas.auth import (
     AuthStatusResponse, MessageResponse, UserPublicResponse
 )
 from app.services.email_service import email_service
+from app.services.oauth_service import OAuthService
 import logging
 import secrets
 
@@ -321,6 +322,207 @@ async def update_user_profile(
         )
 
 
+# OAuth Endpoints
+@router.get("/oauth/google")
+async def google_oauth_initiate(
+    db: Session = Depends(get_db_optional),
+    supabase: Client = Depends(get_supabase)
+):
+    """Initiate Google OAuth flow"""
+
+    try:
+        # Check if database is available
+        if db is None:
+            logger.warning("Database not configured - using simplified OAuth flow")
+
+        oauth_service = OAuthService(supabase, db)
+
+        # Generate OAuth URL
+        oauth_url = oauth_service.generate_oauth_url('google')
+
+        return RedirectResponse(
+            url=oauth_url,
+            status_code=status.HTTP_302_FOUND
+        )
+
+    except Exception as e:
+        logger.error(f"Google OAuth initiation error: {e}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/error?error=oauth_init_failed",
+            status_code=status.HTTP_302_FOUND
+        )
+
+
+@router.get("/oauth/github")
+async def github_oauth_initiate(
+    db: Session = Depends(get_db_optional),
+    supabase: Client = Depends(get_supabase)
+):
+    """Initiate GitHub OAuth flow"""
+
+    try:
+        # Check if database is available
+        if db is None:
+            logger.warning("Database not configured - using simplified OAuth flow")
+
+        oauth_service = OAuthService(supabase, db)
+
+        # Generate OAuth URL
+        oauth_url = oauth_service.generate_oauth_url('github')
+
+        return RedirectResponse(
+            url=oauth_url,
+            status_code=status.HTTP_302_FOUND
+        )
+
+    except Exception as e:
+        logger.error(f"GitHub OAuth initiation error: {e}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/error?error=oauth_init_failed",
+            status_code=status.HTTP_302_FOUND
+        )
+
+
+@router.get("/oauth/callback/google")
+async def google_oauth_callback(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    db: Session = Depends(get_db_optional),
+    supabase: Client = Depends(get_supabase)
+):
+    """Handle Google OAuth callback"""
+
+    if error:
+        logger.error(f"Google OAuth error: {error}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/error?error={error}",
+            status_code=status.HTTP_302_FOUND
+        )
+
+    if not code:
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/error?error=no_code",
+            status_code=status.HTTP_302_FOUND
+        )
+
+    try:
+        # Check if database is available
+        if db is None:
+            logger.warning("Database not configured - using simplified OAuth flow")
+            # For simplified flow, redirect directly to dashboard with success message
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_URL}/dashboard?oauth_success=true&provider=google&message=login_successful",
+                status_code=status.HTTP_302_FOUND
+            )
+
+        oauth_service = OAuthService(supabase, db)
+
+        # Exchange code for token
+        token_data = await oauth_service.exchange_code_for_token('google', code)
+
+        # Get user info
+        user_info = await oauth_service.get_user_info('google', token_data['access_token'])
+
+        # Create or update user profile
+        user_profile = await oauth_service.create_or_update_oauth_user('google', user_info)
+
+        # Generate JWT tokens
+        tokens = await oauth_service.generate_tokens_for_user(user_profile)
+
+        # Redirect to frontend with tokens
+        from urllib.parse import urlencode
+        token_params = urlencode({
+            'access_token': tokens['access_token'],
+            'refresh_token': tokens['refresh_token'],
+            'user_id': str(user_profile.id)
+        })
+        redirect_url = f"{settings.FRONTEND_URL}/auth/callback?success=true&provider=google"
+        redirect_url += f"&{token_params}"
+
+        return RedirectResponse(
+            url=redirect_url,
+            status_code=status.HTTP_302_FOUND
+        )
+
+    except Exception as e:
+        logger.error(f"Google OAuth callback error: {e}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/error?error=callback_failed",
+            status_code=status.HTTP_302_FOUND
+        )
+
+
+@router.get("/oauth/callback/github")
+async def github_oauth_callback(
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    db: Session = Depends(get_db_optional),
+    supabase: Client = Depends(get_supabase)
+):
+    """Handle GitHub OAuth callback"""
+
+    if error:
+        logger.error(f"GitHub OAuth error: {error}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/error?error={error}",
+            status_code=status.HTTP_302_FOUND
+        )
+
+    if not code:
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/error?error=no_code",
+            status_code=status.HTTP_302_FOUND
+        )
+
+    try:
+        # Check if database is available
+        if db is None:
+            logger.warning("Database not configured - using simplified OAuth flow")
+            # For simplified flow, redirect directly to dashboard with success message
+            return RedirectResponse(
+                url=f"{settings.FRONTEND_URL}/dashboard?oauth_success=true&provider=github&message=login_successful",
+                status_code=status.HTTP_302_FOUND
+            )
+
+        oauth_service = OAuthService(supabase, db)
+
+        # Exchange code for token
+        token_data = await oauth_service.exchange_code_for_token('github', code)
+
+        # Get user info
+        user_info = await oauth_service.get_user_info('github', token_data['access_token'])
+
+        # Create or update user profile
+        user_profile = await oauth_service.create_or_update_oauth_user('github', user_info)
+
+        # Generate JWT tokens
+        tokens = await oauth_service.generate_tokens_for_user(user_profile)
+
+        # Redirect to frontend with tokens
+        from urllib.parse import urlencode
+        token_params = urlencode({
+            'access_token': tokens['access_token'],
+            'refresh_token': tokens['refresh_token'],
+            'user_id': str(user_profile.id)
+        })
+        redirect_url = f"{settings.FRONTEND_URL}/auth/callback?success=true&provider=github"
+        redirect_url += f"&{token_params}"
+
+        return RedirectResponse(
+            url=redirect_url,
+            status_code=status.HTTP_302_FOUND
+        )
+
+    except Exception as e:
+        logger.error(f"GitHub OAuth callback error: {e}")
+        return RedirectResponse(
+            url=f"{settings.FRONTEND_URL}/auth/error?error=callback_failed",
+            status_code=status.HTTP_302_FOUND
+        )
+
+
 @router.post("/callback")
 async def auth_callback(
     code: Optional[str] = None,
@@ -328,21 +530,21 @@ async def auth_callback(
     error: Optional[str] = None,
     supabase: Client = Depends(get_supabase)
 ):
-    """Handle OAuth callback from providers"""
-    
+    """Handle OAuth callback from providers (legacy endpoint)"""
+
     if error:
         logger.error(f"OAuth error: {error}")
         return RedirectResponse(
             url=f"{settings.FRONTEND_URL}/auth/error?error={error}",
             status_code=status.HTTP_302_FOUND
         )
-    
+
     if not code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Authorization code not provided"
         )
-    
+
     try:
         # Exchange code for session (handled by Supabase client-side)
         # This endpoint is mainly for handling redirects
