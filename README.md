@@ -23,8 +23,6 @@ venv\Scripts\activate  # Windows
 2. **Install dependencies:**
 ```bash
 pip install -r requirements.txt
-pip install -r requirements-dev.txt
-# pip install -r requirements-gis.txt  # Setelah GDAL terinstall
 ```
 
 3. **Setup environment variables:**
@@ -35,15 +33,34 @@ cp .env.example .env
 
 4. **Jalankan server:**
 ```bash
-uvicorn app.main:app --reload
+# Option 1: Using startup script (recommended)
+python start_server.py
+
+# Option 2: Direct uvicorn command
+uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
-Server akan berjalan di http://localhost:8000
+Server akan berjalan di http://localhost:8001
+
+## 🔐 OAuth Authentication
+
+### Quick OAuth Test
+1. Start the server: `python start_server.py`
+2. Open browser: http://localhost:8001/api/v1/auth/oauth/google
+3. Complete Google OAuth flow
+4. You'll be redirected to frontend with success parameters
+
+### OAuth Endpoints
+- **Google OAuth:** `GET /api/v1/auth/oauth/google`
+- **GitHub OAuth:** `GET /api/v1/auth/oauth/github`
+- **Google Callback:** `GET /api/v1/auth/oauth/callback/google`
+- **GitHub Callback:** `GET /api/v1/auth/oauth/callback/github`
 
 ## 📚 API Documentation
 
-- **Swagger UI:** http://localhost:8000/docs
-- **ReDoc:** http://localhost:8000/redoc
+- **Swagger UI:** http://localhost:8001/docs
+- **ReDoc:** http://localhost:8001/redoc
+- **OAuth Test:** http://localhost:8001/api/v1/auth/oauth/google
 
 ## 🏗️ Project Structure
 
@@ -51,29 +68,34 @@ Server akan berjalan di http://localhost:8000
 scapegis-backend/
 ├── app/
 │   ├── __init__.py
-│   ├── main.py                 # FastAPI app
+│   ├── main.py                    # FastAPI app
 │   ├── core/
-│   │   ├── config.py           # Settings
-│   │   ├── database.py         # DB connection
-│   │   └── security.py         # Auth utilities
+│   │   ├── config.py              # Settings & environment
+│   │   ├── database.py            # DB connection & Supabase
+│   │   └── auth.py                # Auth utilities & JWT
 │   ├── models/
-│   │   ├── user.py            # User models
-│   │   ├── project.py         # Project models
-│   │   └── spatial.py         # Spatial models
-│   ├── api/
-│   │   └── v1/
-│   │       ├── auth.py        # Auth endpoints
-│   │       ├── projects.py    # Project endpoints
-│   │       └── spatial.py     # Spatial endpoints
+│   │   ├── user.py               # User & profile models
+│   │   ├── project.py            # Project models
+│   │   └── layer.py              # Layer models
+│   ├── api/v1/
+│   │   ├── auth.py               # OAuth & auth endpoints
+│   │   ├── projects.py           # Project CRUD endpoints
+│   │   └── layers.py             # Layer CRUD endpoints
 │   ├── services/
-│   │   ├── auth_service.py    # Auth logic
-│   │   └── gis_service.py     # GIS operations
+│   │   ├── oauth_service.py      # OAuth logic (Google/GitHub)
+│   │   └── email_service.py      # Email utilities
+│   ├── schemas/
+│   │   ├── auth.py               # Auth request/response schemas
+│   │   ├── project.py            # Project schemas
+│   │   └── layer.py              # Layer schemas
 │   └── utils/
-│       └── spatial.py         # Spatial utilities
+│       └── responses.py          # API response utilities
+├── docs/
+│   └── oauth-implementation-guide.md  # OAuth documentation
 ├── tests/
-├── requirements.txt
-├── requirements-dev.txt
-├── requirements-gis.txt
+├── requirements.txt               # All dependencies
+├── setup_oauth_database.py       # Database setup script
+├── start_server.py               # Universal server startup
 └── README.md
 ```
 
