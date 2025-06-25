@@ -410,9 +410,22 @@ async def google_oauth_callback(
         # Check if database is available
         if db is None:
             logger.warning("Database not configured - using simplified OAuth flow")
-            # For simplified flow, redirect directly to dashboard with success message
+            # For simplified flow, redirect to /auth/callback with dummy data
+            from urllib.parse import urlencode
+            token_params = urlencode({
+                'access_token': 'dummy',
+                'refresh_token': 'dummy',
+                'user_id': 'dummy',
+                'email': 'dummy@example.com',
+                'name': 'Dummy User',
+                'avatar_url': '',
+                'oauth_success': 'false',
+                'provider': 'google',
+                'message': 'login_failed_no_db'
+            })
+            redirect_url = f"{settings.FRONTEND_URL}/auth/callback?{token_params}"
             return RedirectResponse(
-                url=f"{settings.FRONTEND_URL}/dashboard?oauth_success=true&provider=google&message=login_successful",
+                url=redirect_url,
                 status_code=status.HTTP_302_FOUND
             )
 
@@ -430,15 +443,20 @@ async def google_oauth_callback(
         # Generate JWT tokens
         tokens = await oauth_service.generate_tokens_for_user(user_profile)
 
-        # Redirect to frontend with tokens
+        # Redirect to frontend with tokens and user info
         from urllib.parse import urlencode
         token_params = urlencode({
             'access_token': tokens['access_token'],
             'refresh_token': tokens['refresh_token'],
-            'user_id': str(user_profile.id)
+            'user_id': str(user_profile.id),
+            'email': user_profile.email,
+            'name': user_profile.full_name,
+            'avatar_url': user_profile.avatar_url,
+            'oauth_success': 'true',
+            'provider': 'google',
+            'message': 'login_successful'
         })
-        redirect_url = f"{settings.FRONTEND_URL}/auth/callback?success=true&provider=google"
-        redirect_url += f"&{token_params}"
+        redirect_url = f"{settings.FRONTEND_URL}/auth/callback?{token_params}"
 
         return RedirectResponse(
             url=redirect_url,

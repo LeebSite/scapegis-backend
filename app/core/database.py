@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 # from geoalchemy2 import Geometry  # Will be enabled after GDAL installation
 from supabase import create_client, Client
 from app.core.config import settings
+from urllib.parse import urlencode
 
 # SQLAlchemy setup
 SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL
