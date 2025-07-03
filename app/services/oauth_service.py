@@ -76,7 +76,10 @@ class OAuthService:
                 'prompt': 'consent'
             }
             
-            return f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+            oauth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+            logger.info(f"Generated Google OAuth URL: {oauth_url}")
+            logger.info(f"Redirect URI used: {params['redirect_uri']}")
+            return oauth_url
         
         elif provider == 'github':
             if not settings.GITHUB_CLIENT_ID:

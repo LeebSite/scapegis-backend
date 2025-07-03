@@ -541,42 +541,7 @@ async def github_oauth_callback(
         )
 
 
-@router.post("/callback")
-async def auth_callback(
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    error: Optional[str] = None,
-    supabase: Client = Depends(get_supabase)
-):
-    """Handle OAuth callback from providers (legacy endpoint)"""
-
-    if error:
-        logger.error(f"OAuth error: {error}")
-        return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}/auth/error?error={error}",
-            status_code=status.HTTP_302_FOUND
-        )
-
-    if not code:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Authorization code not provided"
-        )
-
-    try:
-        # Exchange code for session (handled by Supabase client-side)
-        # This endpoint is mainly for handling redirects
-        return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}/auth/success",
-            status_code=status.HTTP_302_FOUND
-        )
-        
-    except Exception as e:
-        logger.error(f"OAuth callback error: {e}")
-        return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}/auth/error?error=callback_failed",
-            status_code=status.HTTP_302_FOUND
-        )
+# Legacy callback endpoint removed - use specific OAuth provider callbacks instead
 
 
 @router.post("/logout")
