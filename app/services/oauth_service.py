@@ -5,6 +5,7 @@ import secrets
 import httpx
 from typing import Dict, Any, Optional, Tuple
 from urllib.parse import urlencode
+from datetime import timedelta
 from fastapi import HTTPException, status
 from authlib.integrations.starlette_client import OAuth
 from authlib.integrations.base_client import OAuthError
@@ -126,7 +127,9 @@ class OAuthService:
     
     async def _exchange_google_code(self, code: str) -> Dict[str, Any]:
         """Exchange Google authorization code for access token"""
-        
+
+        logger.info(f"Exchanging Google authorization code: {code[:20]}...")
+
         token_data = {
             'client_id': settings.GOOGLE_CLIENT_ID,
             'client_secret': settings.GOOGLE_CLIENT_SECRET,
@@ -134,21 +137,29 @@ class OAuthService:
             'grant_type': 'authorization_code',
             'redirect_uri': settings.GOOGLE_REDIRECT_URI,
         }
-        
+
+        logger.info(f"Token exchange data: {dict(token_data, client_secret='***')}")
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 'https://oauth2.googleapis.com/token',
                 data=token_data,
                 headers={'Accept': 'application/json'}
             )
-            
+
+            logger.info(f"Google token response status: {response.status_code}")
+            logger.info(f"Google token response headers: {dict(response.headers)}")
+
             if response.status_code != 200:
+                logger.error(f"Google token exchange failed: {response.text}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Google token exchange failed: {response.text}"
                 )
-            
-            return response.json()
+
+            token_response = response.json()
+            logger.info(f"Token exchange successful: {list(token_response.keys())}")
+            return token_response
     
     async def _exchange_github_code(self, code: str) -> Dict[str, Any]:
         """Exchange GitHub authorization code for access token"""
@@ -196,28 +207,37 @@ class OAuthService:
     
     async def _get_google_user_info(self, access_token: str) -> Dict[str, Any]:
         """Get user information from Google"""
-        
+
+        logger.info(f"Fetching Google user info with token: {access_token[:20]}...")
+
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 'https://www.googleapis.com/oauth2/v2/userinfo',
                 headers={'Authorization': f'Bearer {access_token}'}
             )
-            
+
+            logger.info(f"Google user info response status: {response.status_code}")
+
             if response.status_code != 200:
+                logger.error(f"Failed to get Google user info: {response.text}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Failed to get Google user info: {response.text}"
                 )
-            
+
             user_data = response.json()
-            
-            return {
+            logger.info(f"Google user data received: {user_data}")
+
+            formatted_user_info = {
                 'id': user_data.get('id'),
                 'email': user_data.get('email'),
                 'name': user_data.get('name'),
                 'avatar': user_data.get('picture'),
                 'provider': 'google'
             }
+
+            logger.info(f"Formatted user info: {formatted_user_info}")
+            return formatted_user_info
     
     async def _get_github_user_info(self, access_token: str) -> Dict[str, Any]:
         """Get user information from GitHub"""
@@ -259,11 +279,11 @@ class OAuthService:
                 'provider': 'github'
             }
 
-    async def create_or_update_user(self, user_info: Dict[str, Any]) -> Tuple[UserProfile, bool]:
-        """Create or update user from OAuth provider data
+    async def create_or_update_user(self, user_info: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+        """Create or update user from OAuth provider data using Supabase
 
         Returns:
-            Tuple[UserProfile, bool]: (user_profile, is_new_user)
+            Tuple[Dict[str, Any], bool]: (user_profile, is_new_user)
         """
 
         provider = user_info['provider']
@@ -277,97 +297,108 @@ class OAuthService:
             )
 
         try:
-            # Check if user exists by provider and provider_id
-            existing_user = self.db.query(UserProfile).filter(
-                UserProfile.provider == provider,
-                UserProfile.provider_id == provider_id
-            ).first()
+            logger.info(f"Creating/updating user for provider: {provider}, email: {email}")
+
+            # Check if user exists by email (using Supabase)
+            response = self.supabase.table('user_profiles').select('*').eq('email', email).execute()
+            existing_user = response.data[0] if response.data else None
+
+            logger.info(f"Existing user found: {existing_user is not None}")
 
             if existing_user:
-                # Update existing user
-                existing_user.full_name = user_info.get('name') or existing_user.full_name
-                existing_user.avatar_url = user_info.get('avatar') or existing_user.avatar_url
-                existing_user.is_verified = True  # OAuth users are considered verified
-                self.db.commit()
-                self.db.refresh(existing_user)
-                return existing_user, False
+                logger.info(f"Updating existing user: {existing_user['id']}")
 
-            # For now, we'll create a new user if not found by provider
-            # In the future, you might want to check if user exists by email
-            # and link the OAuth account to existing email account
-
-            # Create new user in Supabase Auth
-            # Note: We need admin client for user creation
-            from app.core.database import get_supabase_admin
-            supabase_admin = get_supabase_admin()
-
-            if not supabase_admin:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Admin client not configured"
-                )
-
-            auth_response = supabase_admin.auth.admin.create_user({
-                "email": email,
-                "email_confirm": True,  # Auto-confirm OAuth users
-                "user_metadata": {
-                    "provider": provider,
-                    "provider_id": provider_id,
-                    "full_name": user_info.get('name'),
-                    "avatar_url": user_info.get('avatar')
+                # Update existing user using Supabase
+                update_data = {
+                    'full_name': user_info.get('name') or existing_user.get('full_name'),
+                    'avatar_url': user_info.get('avatar') or existing_user.get('avatar_url'),
+                    'provider': provider,
+                    'provider_id': provider_id
                 }
-            })
 
-            if not auth_response.user:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to create user in Supabase"
-                )
+                logger.info(f"Update data: {update_data}")
 
-            # Create user profile
-            user_profile = UserProfile(
-                id=auth_response.user.id,
-                full_name=user_info.get('name'),
-                avatar_url=user_info.get('avatar'),
-                provider=provider,
-                provider_id=provider_id,
-                is_verified=True,
-                login_count=1
-            )
+                response = self.supabase.table('user_profiles').update(update_data).eq('id', existing_user['id']).execute()
 
-            self.db.add(user_profile)
-            self.db.commit()
-            self.db.refresh(user_profile)
+                if response.data:
+                    logger.info(f"User updated successfully: {response.data[0]}")
+                    return response.data[0], False
+                else:
+                    logger.error("Failed to update user profile - no data returned")
+                    raise Exception("Failed to update user profile")
 
-            return user_profile, True
+            # Create new user profile using Supabase
+            logger.info("Creating new user profile")
+
+            import uuid
+            user_id = str(uuid.uuid4())
+
+            new_user_data = {
+                'id': user_id,
+                'email': email,
+                'full_name': user_info.get('name', ''),
+                'avatar_url': user_info.get('avatar', ''),
+                'provider': provider,
+                'provider_id': provider_id
+            }
+
+            logger.info(f"New user data: {new_user_data}")
+
+            response = self.supabase.table('user_profiles').insert(new_user_data).execute()
+
+            if response.data:
+                logger.info(f"User created successfully: {response.data[0]}")
+                return response.data[0], True
+            else:
+                logger.error("Failed to create user profile - no data returned")
+                logger.error(f"Supabase response: {response}")
+                raise Exception("Failed to create user profile")
 
         except Exception as e:
-            self.db.rollback()
             logger.error(f"Error creating/updating OAuth user: {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to create or update user: {str(e)}"
             )
 
-    async def generate_tokens_for_user(self, user_profile: UserProfile) -> Dict[str, Any]:
+    async def generate_tokens_for_user(self, user_profile: Dict[str, Any]) -> Dict[str, Any]:
         """Generate JWT tokens for authenticated user"""
+
+        logger.info(f"Generating tokens for user profile: {user_profile}")
+
+        # Safely extract user data
+        user_id = user_profile.get('id')
+        user_email = user_profile.get('email')
+        user_provider = user_profile.get('provider', 'oauth')
+
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="User ID is missing from profile"
+            )
+
+        if not user_email:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="User email is missing from profile"
+            )
 
         # Create access token
         access_token = self.auth_service.create_access_token(
             data={
-                "sub": str(user_profile.id),
-                "email": user_profile.id,  # We'll get email from Supabase
-                "provider": user_profile.provider
+                "sub": str(user_id),
+                "email": user_email,
+                "provider": user_provider
             }
         )
 
         # Create refresh token (simplified - you might want to store this)
         refresh_token = self.auth_service.create_access_token(
             data={
-                "sub": str(user_profile.id),
+                "sub": str(user_id),
                 "type": "refresh"
             },
-            expires_delta=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60  # Convert days to minutes
+            expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         )
 
         return {

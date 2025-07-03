@@ -388,7 +388,6 @@ async def google_oauth_callback(
     code: Optional[str] = None,
     state: Optional[str] = None,
     error: Optional[str] = None,
-    db: Session = Depends(get_db_optional),
     supabase: Client = Depends(get_supabase)
 ):
     """Handle Google OAuth callback"""
@@ -407,51 +406,40 @@ async def google_oauth_callback(
         )
 
     try:
-        # Check if database is available
-        if db is None:
-            logger.warning("Database not configured - using simplified OAuth flow")
-            # For simplified flow, redirect to /auth/callback with dummy data
-            from urllib.parse import urlencode
-            token_params = urlencode({
-                'access_token': 'dummy',
-                'refresh_token': 'dummy',
-                'user_id': 'dummy',
-                'email': 'dummy@example.com',
-                'name': 'Dummy User',
-                'avatar_url': '',
-                'oauth_success': 'false',
-                'provider': 'google',
-                'message': 'login_failed_no_db'
-            })
-            redirect_url = f"{settings.FRONTEND_URL}/auth/callback?{token_params}"
-            return RedirectResponse(
-                url=redirect_url,
-                status_code=status.HTTP_302_FOUND
-            )
+        logger.info(f"Google OAuth callback received - code: {code[:20] if code else 'None'}... state: {state}")
 
-        oauth_service = OAuthService(supabase, db)
+        # Create OAuth service with Supabase only (no database dependency)
+        oauth_service = OAuthService(supabase, None)
 
         # Exchange code for token
+        logger.info("Exchanging authorization code for access token...")
         token_data = await oauth_service.exchange_code_for_token('google', code)
+        logger.info("Successfully obtained access token")
 
         # Get user info
+        logger.info("Fetching user information from Google...")
         user_info = await oauth_service.get_user_info('google', token_data['access_token'])
+        logger.info(f"User info received: {user_info.get('email', 'no-email')}")
 
         # Create or update user profile
-        user_profile = await oauth_service.create_or_update_oauth_user('google', user_info)
+        logger.info("Creating or updating user profile...")
+        user_profile, is_new_user = await oauth_service.create_or_update_user(user_info)
+        logger.info(f"User profile {'created' if is_new_user else 'updated'}: {user_profile.get('email', 'no-email')}")
 
         # Generate JWT tokens
+        logger.info("Generating JWT tokens...")
         tokens = await oauth_service.generate_tokens_for_user(user_profile)
+        logger.info("JWT tokens generated successfully")
 
         # Redirect to frontend with tokens and user info
         from urllib.parse import urlencode
         token_params = urlencode({
             'access_token': tokens['access_token'],
             'refresh_token': tokens['refresh_token'],
-            'user_id': str(user_profile.id),
-            'email': user_profile.email,
-            'name': user_profile.full_name,
-            'avatar_url': user_profile.avatar_url,
+            'user_id': str(user_profile.get('id', '')),
+            'email': user_profile.get('email', ''),
+            'name': user_profile.get('full_name', ''),
+            'avatar_url': user_profile.get('avatar_url', ''),
             'oauth_success': 'true',
             'provider': 'google',
             'message': 'login_successful'
@@ -465,8 +453,11 @@ async def google_oauth_callback(
 
     except Exception as e:
         logger.error(f"Google OAuth callback error: {e}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return RedirectResponse(
-            url=f"{settings.FRONTEND_URL}/auth/error?error=callback_failed",
+            url=f"{settings.FRONTEND_URL}/auth/error?error=callback_failed&details={str(e)[:100]}",
             status_code=status.HTTP_302_FOUND
         )
 
@@ -476,7 +467,6 @@ async def github_oauth_callback(
     code: Optional[str] = None,
     state: Optional[str] = None,
     error: Optional[str] = None,
-    db: Session = Depends(get_db_optional),
     supabase: Client = Depends(get_supabase)
 ):
     """Handle GitHub OAuth callback"""
@@ -495,16 +485,8 @@ async def github_oauth_callback(
         )
 
     try:
-        # Check if database is available
-        if db is None:
-            logger.warning("Database not configured - using simplified OAuth flow")
-            # For simplified flow, redirect directly to dashboard with success message
-            return RedirectResponse(
-                url=f"{settings.FRONTEND_URL}/dashboard?oauth_success=true&provider=github&message=login_successful",
-                status_code=status.HTTP_302_FOUND
-            )
-
-        oauth_service = OAuthService(supabase, db)
+        # Create OAuth service with Supabase only (no database dependency)
+        oauth_service = OAuthService(supabase, None)
 
         # Exchange code for token
         token_data = await oauth_service.exchange_code_for_token('github', code)
@@ -513,7 +495,7 @@ async def github_oauth_callback(
         user_info = await oauth_service.get_user_info('github', token_data['access_token'])
 
         # Create or update user profile
-        user_profile = await oauth_service.create_or_update_oauth_user('github', user_info)
+        user_profile, is_new_user = await oauth_service.create_or_update_user(user_info)
 
         # Generate JWT tokens
         tokens = await oauth_service.generate_tokens_for_user(user_profile)
@@ -523,7 +505,7 @@ async def github_oauth_callback(
         token_params = urlencode({
             'access_token': tokens['access_token'],
             'refresh_token': tokens['refresh_token'],
-            'user_id': str(user_profile.id)
+            'user_id': str(user_profile.get('id', ''))
         })
         redirect_url = f"{settings.FRONTEND_URL}/auth/callback?success=true&provider=github"
         redirect_url += f"&{token_params}"

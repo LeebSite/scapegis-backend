@@ -127,6 +127,69 @@ class AuthService:
                 detail="Failed to create user profile"
             )
 
+    # ADD THIS NEW METHOD untuk handle OAuth user creation
+    async def create_oauth_user_profile(self, user_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Create user profile specifically for OAuth users"""
+        try:
+            import uuid
+            
+            # Generate UUID jika belum ada
+            user_id = user_info.get('id') or str(uuid.uuid4())
+            
+            profile_data = {
+                "id": user_id,
+                "email": user_info.get("email"),
+                "full_name": user_info.get("name", ""),
+                "avatar_url": user_info.get("avatar", ""),
+                "provider": user_info.get("provider", "oauth"),
+                "provider_id": user_info.get("id", "")
+            }
+            
+            logger.info(f"Creating OAuth user profile: {profile_data}")
+            
+            response = self.supabase.table("user_profiles").insert(profile_data).execute()
+            
+            if response.data:
+                logger.info(f"OAuth user profile created successfully: {response.data[0]}")
+                return response.data[0]
+            
+            raise Exception("Failed to create OAuth user profile")
+            
+        except Exception as e:
+            logger.error(f"Error creating OAuth user profile: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create OAuth user profile: {str(e)}"
+            )
+
+    # ADD THIS NEW METHOD untuk update OAuth user
+    async def update_oauth_user_profile(self, user_id: str, user_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Update existing OAuth user profile"""
+        try:
+            update_data = {
+                "full_name": user_info.get("name", ""),
+                "avatar_url": user_info.get("avatar", ""),
+                "provider": user_info.get("provider", "oauth"),
+                "provider_id": user_info.get("id", "")
+            }
+            
+            logger.info(f"Updating OAuth user profile {user_id}: {update_data}")
+            
+            response = self.supabase.table("user_profiles").update(update_data).eq("id", user_id).execute()
+            
+            if response.data:
+                logger.info(f"OAuth user profile updated successfully: {response.data[0]}")
+                return response.data[0]
+            
+            raise Exception("Failed to update OAuth user profile")
+            
+        except Exception as e:
+            logger.error(f"Error updating OAuth user profile: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to update OAuth user profile: {str(e)}"
+            )
+
 
 # Dependency to get current user
 async def get_current_user(
@@ -182,3 +245,166 @@ async def get_admin_user(
         )
     
     return current_user
+
+
+# Tambahkan ini di file auth.py Anda (router endpoints)
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
+from fastapi.responses import RedirectResponse
+from app.services.oauth_service import OAuthService
+from app.core.database import get_supabase, get_db
+from app.core.config import settings
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Fungsi helper untuk mendapatkan OAuth service
+def get_oauth_service(
+    supabase = Depends(get_supabase),
+    db = Depends(get_db)
+) -> OAuthService:
+    return OAuthService(supabase, db)
+
+@router.get("/oauth/callback/google")
+async def google_oauth_callback(
+    request: Request,
+    code: str = Query(...),
+    state: str = Query(...),
+    oauth_service: OAuthService = Depends(get_oauth_service)
+):
+    """Handle Google OAuth callback"""
+    try:
+        logger.info(f"Google OAuth callback started with code: {code[:20]}...")
+        
+        # 1. Exchange authorization code for access token
+        logger.info("Exchanging authorization code for access token...")
+        token_data = await oauth_service.exchange_code_for_token('google', code)
+        
+        if not token_data.get('access_token'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No access token received from Google"
+            )
+        
+        # 2. Get user information from Google
+        logger.info("Fetching user information from Google...")
+        user_info = await oauth_service.get_user_info('google', token_data['access_token'])
+        
+        if not user_info.get('email'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No email received from Google"
+            )
+        
+        # 3. Create or update user profile
+        logger.info(f"Creating/updating user profile for email: {user_info['email']}")
+        user_profile, is_new_user = await oauth_service.create_or_update_user(user_info)
+        
+        # 4. Generate JWT tokens
+        logger.info("Generating JWT tokens...")
+        tokens = await oauth_service.generate_tokens_for_user(user_profile)
+        
+        # 5. PERBAIKAN UTAMA: Gunakan bracket notation untuk dictionary
+        response_data = {
+            'success': True,
+            'user_id': str(user_profile['id']),  # GUNAKAN BRACKET NOTATION
+            'email': user_profile['email'],      # GUNAKAN BRACKET NOTATION
+            'full_name': user_profile.get('full_name', ''),  # GUNAKAN .get() untuk optional
+            'avatar_url': user_profile.get('avatar_url', ''),
+            'is_new_user': is_new_user,
+            'access_token': tokens['access_token'],
+            'refresh_token': tokens['refresh_token'],
+            'token_type': tokens['token_type'],
+            'expires_in': tokens['expires_in']
+        }
+        
+        logger.info(f"OAuth callback successful for user: {response_data['user_id']}")
+        
+        # 6. Redirect ke frontend dengan token
+        frontend_url = f"{settings.FRONTEND_URL}/auth/callback"
+        redirect_url = f"{frontend_url}?token={tokens['access_token']}&success=true"
+        
+        return RedirectResponse(url=redirect_url)
+        
+    except Exception as e:
+        logger.error(f"Google OAuth callback error: {e}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Redirect ke frontend dengan error
+        error_url = f"{settings.FRONTEND_URL}/auth/error"
+        redirect_url = f"{error_url}?error=callback_failed&details={str(e)}"
+        
+        return RedirectResponse(url=redirect_url)
+
+@router.get("/oauth/github")
+async def github_oauth_login(oauth_service: OAuthService = Depends(get_oauth_service)):
+    """Initiate GitHub OAuth login"""
+    try:
+        oauth_url = oauth_service.generate_oauth_url('github')
+        return RedirectResponse(url=oauth_url)
+    except Exception as e:
+        logger.error(f"GitHub OAuth initiation error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initiate GitHub OAuth: {str(e)}"
+        )
+
+@router.get("/oauth/callback/github")
+async def github_oauth_callback(
+    request: Request,
+    code: str = Query(...),
+    state: str = Query(...),
+    oauth_service: OAuthService = Depends(get_oauth_service)
+):
+    """Handle GitHub OAuth callback"""
+    try:
+        logger.info(f"GitHub OAuth callback started with code: {code[:20]}...")
+        
+        # Exchange code for token
+        token_data = await oauth_service.exchange_code_for_token('github', code)
+        
+        # Get user info
+        user_info = await oauth_service.get_user_info('github', token_data['access_token'])
+        
+        # Create or update user
+        user_profile, is_new_user = await oauth_service.create_or_update_user(user_info)
+        
+        # Generate tokens
+        tokens = await oauth_service.generate_tokens_for_user(user_profile)
+        
+        # PERBAIKAN: Gunakan bracket notation untuk dictionary
+        response_data = {
+            'success': True,
+            'user_id': str(user_profile['id']),  # GUNAKAN BRACKET NOTATION
+            'email': user_profile['email'],      # GUNAKAN BRACKET NOTATION
+            'full_name': user_profile.get('full_name', ''),
+            'avatar_url': user_profile.get('avatar_url', ''),
+            'is_new_user': is_new_user,
+            'access_token': tokens['access_token'],
+            'refresh_token': tokens['refresh_token'],
+            'token_type': tokens['token_type'],
+            'expires_in': tokens['expires_in']
+        }
+        
+        logger.info(f"GitHub OAuth callback successful for user: {response_data['user_id']}")
+        
+        # Redirect to frontend with token
+        frontend_url = f"{settings.FRONTEND_URL}/auth/callback"
+        redirect_url = f"{frontend_url}?token={tokens['access_token']}&success=true"
+        
+        return RedirectResponse(url=redirect_url)
+        
+    except Exception as e:
+        logger.error(f"GitHub OAuth callback error: {e}")
+        logger.error(f"Error type: {type(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        
+        # Redirect to frontend with error
+        error_url = f"{settings.FRONTEND_URL}/auth/error"
+        redirect_url = f"{error_url}?error=callback_failed&details={str(e)}"
+        
+        return RedirectResponse(url=redirect_url)
