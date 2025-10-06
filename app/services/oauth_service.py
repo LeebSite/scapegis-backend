@@ -26,33 +26,49 @@ class OAuthService:
         self.supabase = supabase
         self.db = db
         self.auth_service = AuthService(supabase)
-        
+
         # OAuth client configuration
         self.oauth = OAuth()
-        
+
         # Configure Google OAuth
         if settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET:
-            self.oauth.register(
-                name='google',
-                client_id=settings.GOOGLE_CLIENT_ID,
-                client_secret=settings.GOOGLE_CLIENT_SECRET,
-                server_metadata_url='https://accounts.google.com/.well-known/openid_configuration',
-                client_kwargs={
-                    'scope': 'openid email profile'
-                }
-            )
-        
+            try:
+                logger.info(f"Registering Google OAuth with client_id: {settings.GOOGLE_CLIENT_ID[:20]}...")
+                self.oauth.register(
+                    name='google',
+                    client_id=settings.GOOGLE_CLIENT_ID,
+                    client_secret=settings.GOOGLE_CLIENT_SECRET,
+                    server_metadata_url='https://accounts.google.com/.well-known/openid_configuration',
+                    client_kwargs={
+                        'scope': 'openid email profile'
+                    }
+                )
+                logger.info("Google OAuth registered successfully")
+            except Exception as e:
+                logger.error(f"Failed to register Google OAuth: {e}")
+                raise
+        else:
+            logger.warning("Google OAuth not configured - missing client_id or client_secret")
+
         # Configure GitHub OAuth
         if settings.GITHUB_CLIENT_ID and settings.GITHUB_CLIENT_SECRET:
-            self.oauth.register(
-                name='github',
-                client_id=settings.GITHUB_CLIENT_ID,
-                client_secret=settings.GITHUB_CLIENT_SECRET,
-                access_token_url='https://github.com/login/oauth/access_token',
-                authorize_url='https://github.com/login/oauth/authorize',
-                api_base_url='https://api.github.com/',
-                client_kwargs={'scope': 'user:email'},
-            )
+            try:
+                logger.info("Registering GitHub OAuth...")
+                self.oauth.register(
+                    name='github',
+                    client_id=settings.GITHUB_CLIENT_ID,
+                    client_secret=settings.GITHUB_CLIENT_SECRET,
+                    access_token_url='https://github.com/login/oauth/access_token',
+                    authorize_url='https://github.com/login/oauth/authorize',
+                    api_base_url='https://api.github.com/',
+                    client_kwargs={'scope': 'user:email'},
+                )
+                logger.info("GitHub OAuth registered successfully")
+            except Exception as e:
+                logger.error(f"Failed to register GitHub OAuth: {e}")
+                raise
+        else:
+            logger.warning("GitHub OAuth not configured - missing client_id or client_secret")
     
     def generate_oauth_url(self, provider: str, state: Optional[str] = None) -> str:
         """Generate OAuth authorization URL for the specified provider"""
