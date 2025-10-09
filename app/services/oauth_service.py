@@ -412,6 +412,7 @@ class OAuthService:
         refresh_token = self.auth_service.create_access_token(
             data={
                 "sub": str(user_id),
+                "email": user_email,
                 "type": "refresh"
             },
             expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)

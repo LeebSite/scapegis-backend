@@ -2,6 +2,7 @@
 Configuration settings for ScapeGIS Backend
 """
 from typing import Optional, List
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -57,13 +58,14 @@ class Settings(BaseSettings):
     UPLOAD_PATH: str = "./uploads"
 
     # CORS Settings
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:3001", "http://localhost:8080"]
+    ALLOWED_ORIGINS: List[str] = Field(default=["http://localhost:3000", "http://localhost:3001", "http://localhost:8080"], env=False)
 
     # Logging
     LOG_LEVEL: str = "INFO"
 
     class Config:
         case_sensitive = True
+        env_file = ".env"
 
 
 # Global settings instance

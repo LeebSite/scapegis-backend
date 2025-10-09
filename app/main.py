@@ -6,7 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from app.core.config import settings
 from app.core.database import supabase
-from app.api.v1 import test_router, projects_router, layers_router, projects_supabase_router, projects_mock_router, auth
+from app.api.v1 import test_router, layers_router, projects_supabase_router, projects_mock_router, auth
+from app.api.v1.projects import router as projects_router
+from app.api.v1.projects_mock import router as projects_mock_router
 import uvicorn
 
 # Create FastAPI instance
@@ -29,10 +31,16 @@ app.add_middleware(
 # Include API routers
 app.include_router(test_router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
-app.include_router(projects_router, prefix="/api/v1")
+
+# Include projects router based on database configuration
+if settings.USE_DATABASE:
+    app.include_router(projects_router, prefix="/api/v1")
+else:
+    # Use mock router with /projects prefix instead of /projects-mock
+    app.include_router(projects_mock_router, prefix="/api/v1", tags=["Projects"])
+
 app.include_router(layers_router, prefix="/api/v1")
 app.include_router(projects_supabase_router, prefix="/api/v1")
-app.include_router(projects_mock_router, prefix="/api/v1")
 
 # Add trusted host middleware for production
 if settings.ENVIRONMENT == "production":
